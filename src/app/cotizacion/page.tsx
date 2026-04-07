@@ -1,58 +1,143 @@
-'use client';
+"use client";
 
-import { FileText, Copy } from "lucide-react";
-import { useMemo, useState } from "react";
+import { FileText, Plus, Trash2, FileDown } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { apiFetch } from "@/lib/api";
+import { useRouter } from "next/navigation";
 
-type Quote = {
-  createdAt: string;
-  precioVentaCop: number;
-  gananciaCop: number;
-  anticipoPercent: number;
-  anticipoCop: number;
-  saldoCop: number;
-  capitalPropioCop: number;
-  trmCopPorUsd: number | null;
+type ClientRow = { id: string; name: string };
+type ProductRow = { id: string; name: string; priceCop: number | null };
+
+type QuoteItemDraft = {
+  id: string;
+  productId: string;
+  name: string;
+  quantity: number;
+  unitCop: string;
 };
 
-const formatearCop = (valor: number) => {
-  return new Intl.NumberFormat("es-CO", {
-    style: "currency",
-    currency: "COP",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(valor);
-};
+const formatCop = (value: number) =>
+  new Intl.NumberFormat("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 }).format(value);
+
+const newItem = (prefillUnitCop?: number): QuoteItemDraft => ({
+  id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  productId: "",
+  name: "",
+  quantity: 1,
+  unitCop: prefillUnitCop ? String(Math.round(prefillUnitCop)) : "",
+});
 
 export default function Page() {
-  const [quote] = useState<Quote | null>(() => {
+  const router = useRouter();
+  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [products, setProducts] = useState<ProductRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [clientId, setClientId] = useState("");
+  const [note, setNote] = useState("");
+  const [items, setItems] = useState<QuoteItemDraft[]>([newItem()]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        const [clientsData, productsData] = await Promise.all([
+          apiFetch<Array<{ id: string; name: string }>>("/clients"),
+          apiFetch<Array<{ id: string; name: string; priceCop: number | null }>>("/products"),
+        ]);
+        if (cancelled) return;
+        setClients(clientsData);
+        setProducts(productsData);
+
+        try {
+          const raw = window.sessionStorage.getItem("fershop_quote_price");
+          if (raw) {
+            const parsed = JSON.parse(raw) as { precioVentaCop?: number };
+            if (typeof parsed.precioVentaCop === "number" && parsed.precioVentaCop > 0) {
+              setItems([newItem(parsed.precioVentaCop)]);
+            }
+          }
+        } catch { }
+      } catch (e: unknown) {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : "Error cargando datos");
+      } finally {
+        if (cancelled) return;
+        setLoading(false);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const totals = useMemo(() => {
+    const parsed = items.map((i) => {
+      const unitCop = i.unitCop.trim() === "" ? 0 : Number(i.unitCop);
+      const quantity = Number.isFinite(i.quantity) && i.quantity > 0 ? i.quantity : 1;
+      const totalCop = (Number.isFinite(unitCop) ? unitCop : 0) * quantity;
+      return { unitCop, quantity, totalCop };
+    });
+    const totalCop = parsed.reduce((acc, i) => acc + i.totalCop, 0);
+    return { totalCop };
+  }, [items]);
+
+  const onAddItem = () => setItems((prev) => [...prev, newItem()]);
+
+  const onRemoveItem = (id: string) =>
+    setItems((prev) => (prev.length <= 1 ? prev : prev.filter((i) => i.id !== id)));
+
+  const onSelectProduct = (rowId: string, productIdValue: string) => {
+    const p = products.find((x) => x.id === productIdValue) ?? null;
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.id !== rowId) return i;
+        if (!p) return { ...i, productId: "", name: "" };
+        const nextUnitCop =
+          p.priceCop !== null && (i.unitCop.trim() === "" || i.unitCop === "0") ? String(Math.round(p.priceCop)) : i.unitCop;
+        return { ...i, productId: p.id, name: p.name, unitCop: nextUnitCop };
+      }),
+    );
+  };
+
+  const canSave = !loading && !saving && !!clientId && items.some((i) => i.name.trim() && Number(i.unitCop) > 0);
+
+  const onCreateQuote = async () => {
+    if (!canSave) return;
     try {
-      const raw = window.sessionStorage.getItem("fershop_quote");
-      if (!raw) return null;
-      return JSON.parse(raw) as Quote;
-    } catch {
-      return null;
+      setSaving(true);
+      setError(null);
+      const payload = {
+        clientId,
+        note: note.trim() || null,
+        items: items
+          .filter((i) => i.name.trim())
+          .map((i) => ({
+            productId: i.productId || null,
+            name: i.name.trim(),
+            quantity: i.quantity,
+            unitCop: Number(i.unitCop),
+          })),
+      };
+      const created = await apiFetch<{ id: string }>("/quotes", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      router.push(`/cotizacion/${created.id}`);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Error creando cotización");
+    } finally {
+      setSaving(false);
     }
-  });
-
-  const copyText = useMemo(() => {
-    if (!quote) return "";
-    return [
-      `Cotización - FerShop`,
-      `Precio venta: ${formatearCop(quote.precioVentaCop)}`,
-      `Anticipo (${quote.anticipoPercent.toFixed(2)}%): ${formatearCop(quote.anticipoCop)}`,
-      `Saldo: ${formatearCop(quote.saldoCop)}`,
-    ].join("\n");
-  }, [quote]);
-
-  const onCopy = async () => {
-    if (!copyText) return;
-    try {
-      await navigator.clipboard.writeText(copyText);
-    } catch { }
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 max-w-4xl mx-auto pt-14 md:pt-0">
+    <div className="space-y-6 sm:space-y-8 max-w-5xl mx-auto pt-14 md:pt-0">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="flex h-10 w-10 sm:h-12 sm:w-12 items-center justify-center rounded-xl brand-icon-bg shrink-0">
@@ -60,64 +145,122 @@ export default function Page() {
           </div>
           <div>
             <h2 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Cotización</h2>
-            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400">Resumen para compartir con el cliente</p>
+            <p className="text-sm sm:text-base text-slate-500 dark:text-slate-400">Cliente, productos y precio final</p>
           </div>
         </div>
-
-        <button
-          onClick={onCopy}
-          disabled={!quote}
-          className={`flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors ${quote ? "brand-solid" : "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
-            }`}
-        >
-          <Copy className="h-4 w-4" />
-          Copiar
-        </button>
       </div>
 
-      {!quote ? (
-        <div className="rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-sm">
-          <p className="text-slate-500 dark:text-slate-400">
-            No hay una cotización guardada. Ve a Calculadora y usa “Copiar cotización”.
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-sm space-y-6">
-          <div className="rounded-2xl bg-[#1A1F2C] p-5 sm:p-6 text-white">
-            <p className="text-[10px] sm:text-xs font-bold tracking-wider text-slate-400 mb-2 uppercase">Precio de venta</p>
-            <p className="text-2xl sm:text-3xl font-bold brand-accent-text break-all">{formatearCop(quote.precioVentaCop)}</p>
-          </div>
+      {error ? <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">{error}</div> : null}
 
-          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
-            <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-5">
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">Anticipo</p>
-              <p className="text-lg font-bold text-slate-900 dark:text-white">{formatearCop(quote.anticipoCop)}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{quote.anticipoPercent.toFixed(2)}% sobre la venta</p>
-            </div>
-            <div className="rounded-2xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 p-5">
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-2">Saldo</p>
-              <p className="text-lg font-bold text-slate-900 dark:text-white">{formatearCop(quote.saldoCop)}</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Pendiente por pagar</p>
-            </div>
+      <div className="rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 sm:p-8 shadow-sm space-y-6">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Cliente</label>
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+              disabled={loading}
+            >
+              <option value="">Seleccione un cliente</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </div>
-
-          <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2">
-            <div className="flex justify-between items-center rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
-              <span className="text-sm text-slate-500 dark:text-slate-400">Ganancia</span>
-              <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatearCop(quote.gananciaCop)}</span>
-            </div>
-            <div className="flex justify-between items-center rounded-2xl border border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 p-5">
-              <span className="text-sm text-slate-500 dark:text-slate-400">Capital propio</span>
-              <span className="text-sm font-semibold text-slate-900 dark:text-white">{formatearCop(quote.capitalPropioCop)}</span>
-            </div>
-          </div>
-
-          <div className="flex justify-between items-center text-xs text-slate-400 dark:text-slate-500">
-            <span>{new Date(quote.createdAt).toLocaleString("es-CO")}</span>
-            <span>{quote.trmCopPorUsd ? `TRM: ${quote.trmCopPorUsd}` : ""}</span>
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Nota</label>
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              type="text"
+              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+              placeholder="Opcional"
+            />
           </div>
         </div>
-      )}
+
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Productos</h3>
+          <button
+            type="button"
+            onClick={onAddItem}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Agregar
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {items.map((i) => (
+            <div key={i.id} className="grid gap-3 grid-cols-1 md:grid-cols-12">
+              <select
+                value={i.productId}
+                onChange={(e) => onSelectProduct(i.id, e.target.value)}
+                className="md:col-span-4 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+              >
+                <option value="">Producto (opcional)</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={i.name}
+                onChange={(e) => setItems((prev) => prev.map((x) => (x.id === i.id ? { ...x, name: e.target.value } : x)))}
+                type="text"
+                className="md:col-span-4 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+                placeholder="Nombre del producto"
+              />
+              <input
+                value={i.quantity}
+                onChange={(e) =>
+                  setItems((prev) =>
+                    prev.map((x) => (x.id === i.id ? { ...x, quantity: e.target.value === "" ? 1 : Number(e.target.value) } : x)),
+                  )
+                }
+                type="number"
+                className="md:col-span-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+                placeholder="Cant."
+                min={1}
+              />
+              <input
+                value={i.unitCop}
+                onChange={(e) => setItems((prev) => prev.map((x) => (x.id === i.id ? { ...x, unitCop: e.target.value } : x)))}
+                type="number"
+                className="md:col-span-2 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+                placeholder="COP"
+              />
+              <button
+                type="button"
+                onClick={() => onRemoveItem(i.id)}
+                className="md:col-span-1 w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-3 text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              >
+                <Trash2 className="h-4 w-4 mx-auto" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="text-sm text-slate-500 dark:text-slate-400">
+            Total: <span className="font-bold text-slate-900 dark:text-white">{formatCop(totals.totalCop)}</span>
+          </div>
+          <button
+            onClick={onCreateQuote}
+            disabled={!canSave}
+            className={`inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium text-white transition-colors ${canSave ? "brand-solid" : "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
+              }`}
+          >
+            <FileDown className="h-4 w-4" />
+            Generar PDF
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

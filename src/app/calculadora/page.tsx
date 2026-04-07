@@ -1,6 +1,6 @@
 'use client';
 
-import { Calculator, RotateCcw, Copy } from "lucide-react";
+import { Calculator, RotateCcw, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -138,34 +138,12 @@ export default function Page() {
     }).format(valor);
   };
 
-  const copyAndGoToCotizacion = async () => {
+  const goToCotizacion = async () => {
     if (!canQuote) return;
 
-    const quote = {
-      createdAt: new Date().toISOString(),
-      precioVentaCop,
-      gananciaCop,
-      anticipoPercent,
-      anticipoCop,
-      saldoCop: roundTo(precioVentaCop - anticipoCop, 2),
-      capitalPropioCop,
-      trmCopPorUsd: trmCopPorUsdN || null,
-    };
-
     if (typeof window !== "undefined") {
-      window.sessionStorage.setItem("fershop_quote", JSON.stringify(quote));
+      window.sessionStorage.setItem("fershop_quote_price", JSON.stringify({ precioVentaCop }));
     }
-
-    const text = [
-      `Cotización - FerShop`,
-      `Precio venta: ${formatearCop(quote.precioVentaCop)}`,
-      `Anticipo (${quote.anticipoPercent.toFixed(2)}%): ${formatearCop(quote.anticipoCop)}`,
-      `Saldo: ${formatearCop(quote.saldoCop)}`,
-    ].join("\n");
-
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch { }
 
     router.push("/cotizacion");
   };
@@ -201,45 +179,45 @@ export default function Page() {
                   className="w-full rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
                 />
                 <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Anticipo cliente % sobre venta</label>
-                <div className="relative">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Anticipo cliente % sobre venta</label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      value={
+                        anticipoMode === "percent"
+                          ? (anticipoPercentInput ?? "")
+                          : (hasCoreInput && precioVentaCop ? anticipoPercent.toFixed(2) : "")
+                      }
+                      onChange={(e) => {
+                        setAnticipoMode("percent");
+                        setAnticipoPercentInput(e.target.value === "" ? null : Number(e.target.value));
+                      }}
+                      onBlur={() => {
+                        if (anticipoMode !== "percent") return;
+                        if (anticipoPercentInput === null) setAnticipoPercentInput(50);
+                      }}
+                      className="w-full rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 pr-10 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Anticipo cliente (COP)</label>
                   <input
                     type="number"
-                    value={
-                      anticipoMode === "percent"
-                        ? (anticipoPercentInput ?? "")
-                        : (hasCoreInput && precioVentaCop ? anticipoPercent.toFixed(2) : "")
-                    }
+                    value={anticipoMode === "amount" ? (anticipoCopInput ?? "") : (hasCoreInput && precioVentaCop ? anticipoCop.toFixed(0) : "")}
                     onChange={(e) => {
-                      setAnticipoMode("percent");
-                      setAnticipoPercentInput(e.target.value === "" ? null : Number(e.target.value));
+                      setAnticipoMode("amount");
+                      setAnticipoCopInput(e.target.value === "" ? null : Number(e.target.value));
                     }}
                     onBlur={() => {
-                      if (anticipoMode !== "percent") return;
-                      if (anticipoPercentInput === null) setAnticipoPercentInput(50);
+                      if (anticipoMode !== "amount") return;
+                      if (anticipoCopInput === null) setAnticipoCopInput(0);
                     }}
-                    className="w-full rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 pr-10 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
+                    className="w-full rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
                   />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">%</span>
                 </div>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Anticipo cliente (COP)</label>
-                <input
-                  type="number"
-                  value={anticipoMode === "amount" ? (anticipoCopInput ?? "") : (hasCoreInput && precioVentaCop ? anticipoCop.toFixed(0) : "")}
-                  onChange={(e) => {
-                    setAnticipoMode("amount");
-                    setAnticipoCopInput(e.target.value === "" ? null : Number(e.target.value));
-                  }}
-                  onBlur={() => {
-                    if (anticipoMode !== "amount") return;
-                    if (anticipoCopInput === null) setAnticipoCopInput(0);
-                  }}
-                  className="w-full rounded-xl sm:rounded-2xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-4 py-3 text-sm outline-none focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 dark:text-white"
-                />
-              </div>
-            </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Tax_USA_%</label>
                 <input
@@ -401,13 +379,13 @@ export default function Page() {
               Limpiar
             </button>
             <button
-              onClick={copyAndGoToCotizacion}
+              onClick={goToCotizacion}
               disabled={!canQuote}
               className={`flex justify-center items-center gap-2 rounded-xl px-6 py-3 text-sm font-medium text-white shadow-sm transition-colors flex-1 ${canQuote ? "brand-solid" : "bg-slate-300 dark:bg-slate-700 cursor-not-allowed"
                 }`}
             >
-              <Copy className="h-4 w-4" />
-              Copiar cotización
+              <ArrowRight className="h-4 w-4" />
+              Usar en cotización
             </button>
           </div>
         </div>
